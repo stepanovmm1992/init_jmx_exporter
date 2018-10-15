@@ -1,0 +1,128 @@
+#!/bin/bash
+
+
+
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+NAME="jmx_prometheus_httpserver-0.3.2-SNAPSHOT-jar-with-dependencies.jar"
+MATTERMOST_USER=root
+JAVA_SETTINGS="-Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.port=5555"
+PIDFILE="/var/run/$NAME.pid"
+SCRIPTNAME="/usr/local/bin/$NAME"
+HOSTNAME=`hostname`
+PROMETHEUS_PORT=5556
+CONFIGFILE="/etc/jmx_exporter/httpserver_sample_config.yml"
+PID=`pgrep -f "$NAME"`
+DAEMON="java $JAVA_SETTINGS -jar $SCRIPTNAME "
+
+
+check_pidfile ()
+{
+        PID="`pgrep -f "$NAME"`"
+        if [ -n "$PID" ] && [ "`ps -p "$PID" --no-headers -o comm`" != "$NAME" ]; then
+                rm -f $PIDFILE &> /dev/null
+        fi
+}
+
+start()
+{
+        echo -n $"Starting $NAME: "
+        check_pidfile
+        if [ -n "`pgrep -f $NAME`" ];
+        then
+                echo -n $"$NAME: already running"
+                echo "success"
+                echo
+                exit 0;
+        fi
+
+        $DAEMON $HOSTNAME:$PROMETHEUS_PORT $CONFIGFILE >/dev/null 2>&1&
+        RETVAL=$?
+        if [ $RETVAL -eq 0 ];
+        then
+                echo `pgrep -f $NAME` > $PIDFILE
+                touch /var/lock/subsys/$NAME && echo "success" || echo "failure"
+                echo
+        else
+                rm -f $PIDFILE
+                rm -f /var/lock/subsys/$NAME
+                exit 7;
+        fi
+}
+
+stop()
+{
+
+        echo -n $"Stopping $NAME: "
+        [ -n "`pgrep -f "$NAME"`" ] && kill "`pgrep -f "$NAME"`" >/dev/null 2>&1
+
+        timeout=0
+        RETVAL=0
+        while `pgrep -f "$NAME"` &>/dev/null;
+        do
+                if [ $timeout -ge $MATTERMOST_SHUTDOWN_TIMEOUT ];
+                then
+                        RETVAL=1
+                        break
+                else
+                        sleep 2 && echo -n "."
+                        timeout=$((timeout+2))
+                fi
+        done
+
+        # remove pid files
+        if [ $RETVAL -eq 0 ];
+        then
+                rm -f /var/lock/subsys/$NAME
+                rm -f /var/run/$NAME.pid
+        fi
+
+        if [ $RETVAL -eq 0 ];
+        then
+                echo "success"
+        else
+                echo "failure"
+                RETVAL=1
+        fi
+        echo
+}
+
+restart ()
+{
+        stop
+        start
+}
+
+status ()
+{
+        check_pidfile
+        if [ -n "`pgrep -f "$NAME"`" ]; then echo -n "$NAME is running..."
+                echo "success"
+                echo
+        else
+                echo -n "$NAME is not running..."
+                echo
+        fi
+        exit 0;
+}
+
+RETVAL=0
+
+case "$1" in
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  restart|force-reload)
+    restart
+    ;;
+  status)
+    status
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|status|restart|force-reload}"
+    RETVAL=1
+esac
+
+exit $RETVAL
